@@ -25,7 +25,7 @@ CREATE TABLE [user]
     down_votes        INT            NOT NULL,
     profile_image_url NVARCHAR(200),
     account_id        INT,
-    PRIMARY KEY ([id], [site_id]),
+    PRIMARY KEY ([site_id], [id]),
     FOREIGN KEY (site_id) REFERENCES [site] ([id]) ON DELETE CASCADE
 );
     `

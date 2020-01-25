@@ -10,7 +10,13 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/kjk/lzmadec"
+
+	"github.com/gen2brain/go-unarr"
 
 	"github.com/alecthomas/repr"
 
@@ -157,12 +163,54 @@ func execOn7zFile(fpath, name string, f func(io.Reader) error) error {
 	return errors.New("File not found!")
 }
 
-func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
-	sz, err := go7z.OpenReader(fpath)
+// Use to execute function on one file in the 7zip archive.
+func execOn7zFilePro(fpath, name string, f func(io.Reader) error) error {
+	a, err := unarr.NewArchive(fpath)
 	if err != nil {
 		return err
 	}
-	defer sz.Close()
+	defer a.Close()
+
+	list, err := a.List()
+	if err != nil {
+		return err
+	}
+	repr.Println(list)
+
+	if err := a.EntryFor(name); err != nil {
+		return err
+	}
+
+	if err := f(a); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Use to execute function on one file in the 7zip archive.
+func execOn7zFileProer(fpath, name string, f func(io.Reader) error) error {
+	a, err := lzmadec.NewArchive(fpath)
+	if err != nil {
+		return err
+	}
+
+	rdr, err := a.GetFileReader(name)
+	if err != nil {
+		return err
+	}
+	defer rdr.Close()
+
+	if err := f(rdr); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
+	tt := time.Now()
+	fmt.Printf("%-40s", name)
 
 	// Now we setup the sites
 	if _, err := db.Exec(sqlSetupTables); err != nil {
@@ -194,11 +242,11 @@ func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
 		return err
 	}
 
-	log.Printf("The site id for %s is %d\n", name, siteID)
+	//log.Printf("The site id for %s is %d\n", name, siteID)
 
 	// This is simpler.
 	fUser := func(r io.Reader) error {
-		log.Printf("Beginning to parse users\n")
+		//log.Printf("Beginning to parse users\n")
 		decoder := xml.NewDecoder(r)
 
 		txn, err := db.Begin()
@@ -301,15 +349,18 @@ func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("We copied %d rows.\n", rowCount)
-		log.Printf("Done parsing users\n")
+		rowCount = rowCount
+		//log.Printf("We copied %d rows.\n", rowCount)
+		//log.Printf("Done parsing users\n")
 		return nil
 	}
 
-	if err := execOn7zFile(fpath, "Users.xml", fUser); err != nil {
+	if err := execOn7zFileProer(fpath, "Users.xml", fUser); err != nil {
 		return err
 	}
 
+	dd := time.Since(tt)
+	fmt.Printf(" %10d ms\n", dd.Milliseconds())
 	return nil
 }
 
@@ -325,15 +376,22 @@ func makeConnURL() *url.URL {
 }
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Printf("need to provide name then path\n")
-		return
+	// processSingleArchive()
+	if err := processWholeFolder(); err != nil {
+		log.Fatalf("Couldn't process folder: %s\n", err.Error())
 	}
+}
+
+func processWholeFolder() error {
+	if len(os.Args) != 2 {
+		return fmt.Errorf("need to provide directory to iterate")
+	}
+
 
 	connStr := makeConnURL().String()
 	connector, err := mssql.NewConnector(connStr)
 	if err != nil {
-		log.Fatalf("Error creating connector: %s\n", err.Error())
+		return fmt.Errorf("Error creating connector: %s", err.Error())
 	}
 
 	db := sql.OpenDB(connector)
@@ -341,12 +399,51 @@ func main() {
 
 	// We try a ping here, just to see
 	if err := db.Ping(); err != nil {
-		log.Fatalf("We could not ping the database: %s\n", err.Error())
+		return fmt.Errorf("We could not ping the database: %s", err.Error())
+	}
+
+	ents, err := ioutil.ReadDir(os.Args[1])
+	if err != nil {
+		return err
+	}
+
+	for _, ent := range ents {
+		nm := ent.Name()
+		if strings.HasSuffix(nm, ".stackexchange.com.7z") && !ent.IsDir() {
+			name := strings.TrimSuffix(nm, ".stackexchange.com.7z")
+			fpath := filepath.Join(os.Args[1], nm)
+			if err := ParseStack7zSQL(db, name, fpath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func processSingleArchive() error {
+	if len(os.Args) != 3 {
+		return fmt.Errorf("need to provide name then path")
+
+	}
+
+	connStr := makeConnURL().String()
+	connector, err := mssql.NewConnector(connStr)
+	if err != nil {
+		return fmt.Errorf("Error creating connector: %s", err.Error())
+	}
+
+	db := sql.OpenDB(connector)
+	defer db.Close()
+
+	// We try a ping here, just to see
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("We could not ping the database: %s", err.Error())
 	}
 
 	// open up 7zip file
 	if err := ParseStack7zSQL(db, os.Args[1], os.Args[2]); err != nil {
-		log.Fatalf("Couldn't parse 7z: %s\n", err.Error())
+		return fmt.Errorf("Couldn't parse 7z: %s", err.Error())
 	}
 
+	return nil
 }
