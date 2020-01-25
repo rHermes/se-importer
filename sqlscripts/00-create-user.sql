@@ -1,0 +1,1 @@
+CREATE USER [se_admin]
