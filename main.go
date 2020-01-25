@@ -279,31 +279,3 @@ func processWholeFolder() error {
 	}
 	return nil
 }
-
-func processSingleArchive() error {
-	if len(os.Args) != 3 {
-		return fmt.Errorf("need to provide name then path")
-
-	}
-
-	connStr := makeConnURL().String()
-	connector, err := mssql.NewConnector(connStr)
-	if err != nil {
-		return fmt.Errorf("Error creating connector: %s", err.Error())
-	}
-
-	db := sql.OpenDB(connector)
-	defer db.Close()
-
-	// We try a ping here, just to see
-	if err := db.Ping(); err != nil {
-		return fmt.Errorf("We could not ping the database: %s", err.Error())
-	}
-
-	// open up 7zip file
-	if err := ParseStack7zSQL(db, os.Args[1], os.Args[2]); err != nil {
-		return fmt.Errorf("Couldn't parse 7z: %s", err.Error())
-	}
-
-	return nil
-}
