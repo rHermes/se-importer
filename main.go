@@ -14,117 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kjk/lzmadec"
-
-	"github.com/gen2brain/go-unarr"
-
-	"github.com/alecthomas/repr"
-
 	mssql "github.com/denisenkom/go-mssqldb"
-
+	"github.com/kjk/lzmadec"
 	"github.com/saracen/go7z"
 )
-
-// Time does not implment unmarshal, so I had to do this
-type SEDate struct {
-	time.Time
-}
-
-func (t *SEDate) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	var s string
-	if err := d.DecodeElement(&s, &start); err != nil {
-		return err
-	}
-	ti, err := time.Parse("2006-01-02T15:04:05.999", s)
-	if err != nil {
-		return err
-	}
-	t.Time = ti
-	return nil
-}
-
-func (t *SEDate) UnmarshalXMLAttr(attr xml.Attr) error {
-	ti, err := time.Parse("2006-01-02T15:04:05.999", attr.Value)
-	if err != nil {
-		return err
-	}
-	t.Time = ti
-	return nil
-}
-
-type Site struct {
-	Users    []User
-	Tags     []Tag
-	Badges   []Badge
-	Posts    []Post
-	Comments []Comment
-}
-
-type User struct {
-	ID              int     `xml:"Id,attr"`
-	Reputation      int     `xml:"Reputation,attr"`
-	CreationDate    SEDate  `xml:"CreationDate,attr"`
-	DisplayName     *string `xml:"DisplayName,attr"`
-	LastAccessDate  SEDate  `xml:"LastAccessDate,attr"`
-	WebsiteURL      *string `xml:"WebsiteUrl,attr"`
-	Location        *string `xml:"Location,attr"`
-	AboutMe         *string `xml:"AboutMe,attr"`
-	Views           int     `xml:"Views,attr"`
-	UpVotes         int     `xml:"UpVotes,attr"`
-	DownVotes       int     `xml:"DownVotes,attr"`
-	ProfileImageURL *string `xml:"ProfileImageUrl,attr"`
-	AccountID       *int    `xml:"AccountId,attr"`
-}
-
-type Tag struct {
-	ID            int    `xml:"Id,attr"`
-	TagName       string `xml:"TagName,attr"`
-	Count         int    `xml:"Count,attr"`
-	ExcerptPostID *int   `xml:"ExcerptPostId,attr"`
-	WikiPostID    *int   `xml:"WikiPostId,attr"`
-}
-
-type Badge struct {
-	ID       int    `xml:"Id,attr"`
-	UserID   int    `xml:"UserId,attr"`
-	Name     string `xml:"Name,attr"`
-	Date     SEDate `xml:"Date,attr"`
-	Class    int    `xml:"Class,attr"`
-	TagBased bool   `xml:"TagBased,attr"`
-}
-
-type Post struct {
-	ID                 int    `xml:"Id,attr"`
-	PostTypeID         int    `xml:"PostTypeId,attr"`
-	AcceptedAnswerID   *int   `xml:"AcceptedAnswerId,attr"`
-	ParentID           *int   `xml:"ParentId,attr"`
-	CreationDate       SEDate `xml:"CreationDate,attr"`
-	Score              int    `xml:"Score,attr"`
-	ViewCount          *int   `xml:"ViewCount,attr"`
-	Body               string `xml:"Body,attr"`
-	OwnerUserID        *int   `xml:"OwnerUserId,attr"`
-	LastActivityDate   SEDate `xml:"LastActivityDate,attr"`
-	Title              string `xml:"Title,attr"`
-	Tags               string `xml:"Tags,attr"`
-	AnswerCount        string `xml:"AnswerCount,attr"`
-	CommentCount       string `xml:"CommentCount,attr"`
-	FavoriteCount      string `xml:"FavoriteCount,attr"`
-	LastEditorUserId   string `xml:"LastEditorUserId,attr"`
-	LastEditDate       SEDate `xml:"LastEditDate,attr"`
-	CommunityOwnedDate SEDate `xml:"CommunityOwnedDate,attr"`
-	ClosedDate         SEDate `xml:"ClosedDate,attr"`
-	OwnerDisplayName   string `xml:"OwnerDisplayName,attr"`
-}
-
-type Comment struct {
-	ID              int     `xml:"Id,attr"`
-	PostID          int     `xml:"PostId,attr"`
-	Score           int     `xml:"Score,attr"`
-	Text            string  `xml:"Text,attr"`
-	CreationDate    SEDate  `xml:"CreationDate,attr"`
-	UserDisplayName *string `xml:"UserDisplayName,attr"`
-	UserID          *int    `xml:"UserId,attr"`
-}
 
 // Use to execute function on one file in the 7zip archive.
 func execOn7zFile(fpath, name string, f func(io.Reader) error) error {
@@ -164,31 +57,6 @@ func execOn7zFile(fpath, name string, f func(io.Reader) error) error {
 }
 
 // Use to execute function on one file in the 7zip archive.
-func execOn7zFilePro(fpath, name string, f func(io.Reader) error) error {
-	a, err := unarr.NewArchive(fpath)
-	if err != nil {
-		return err
-	}
-	defer a.Close()
-
-	list, err := a.List()
-	if err != nil {
-		return err
-	}
-	repr.Println(list)
-
-	if err := a.EntryFor(name); err != nil {
-		return err
-	}
-
-	if err := f(a); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Use to execute function on one file in the 7zip archive.
 func execOn7zFileProer(fpath, name string, f func(io.Reader) error) error {
 	a, err := lzmadec.NewArchive(fpath)
 	if err != nil {
@@ -208,44 +76,8 @@ func execOn7zFileProer(fpath, name string, f func(io.Reader) error) error {
 	return nil
 }
 
-func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
-	tt := time.Now()
-	fmt.Printf("%-40s", name)
-
-	// Now we setup the sites
-	if _, err := db.Exec(sqlSetupTables); err != nil {
-		repr.Println(err)
-		return err
-	}
-
-	// Now to drop the data we have
-	dSite, err := db.Prepare(sqlDeleteSite)
-	if err != nil {
-		return err
-	}
-	defer dSite.Close()
-	if _, err := dSite.Exec(sql.Named("name", name)); err != nil {
-		return err
-	}
-
-	// First we need to insert the site
-	iSite, err := db.Prepare(sqlInsertSite)
-	if err != nil {
-		return err
-	}
-	defer iSite.Close()
-
-	var siteID int
-	row := iSite.QueryRow(sql.Named("name", name))
-	if err := row.Scan(&siteID); err != nil {
-		repr.Println(err)
-		return err
-	}
-
-	//log.Printf("The site id for %s is %d\n", name, siteID)
-
-	// This is simpler.
-	fUser := func(r io.Reader) error {
+func parseUserFunc(db *sql.DB, siteID int) func(io.Reader) error {
+	return func(r io.Reader) error {
 		//log.Printf("Beginning to parse users\n")
 		decoder := xml.NewDecoder(r)
 
@@ -336,24 +168,53 @@ func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
 			}
 		}
 
-		res, err := stmt.Exec()
-		if err != nil {
+		if _, err := stmt.Exec(); err != nil {
 			return err
 		}
-
 		if err := txn.Commit(); err != nil {
 			return err
 		}
 
-		rowCount, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		rowCount = rowCount
-		//log.Printf("We copied %d rows.\n", rowCount)
-		//log.Printf("Done parsing users\n")
 		return nil
 	}
+}
+
+func ParseStack7zSQL(db *sql.DB, name, fpath string) error {
+	tt := time.Now()
+	fmt.Printf("%-40s", name)
+
+	// Now we setup the sites
+	if _, err := db.Exec(sqlSetupTables); err != nil {
+		return err
+	}
+
+	// Now to drop the data we have
+	dSite, err := db.Prepare(sqlDeleteSite)
+	if err != nil {
+		return err
+	}
+	defer dSite.Close()
+	if _, err := dSite.Exec(sql.Named("name", name)); err != nil {
+		return err
+	}
+
+	// First we need to insert the site
+	iSite, err := db.Prepare(sqlInsertSite)
+	if err != nil {
+		return err
+	}
+	defer iSite.Close()
+
+	var siteID int
+	row := iSite.QueryRow(sql.Named("name", name))
+	if err := row.Scan(&siteID); err != nil {
+		return err
+	}
+
+	//log.Printf("The site id for %s is %d\n", name, siteID)
+
+	// This is simpler.
+	fUser := parseUserFunc(db, siteID)
 
 	if err := execOn7zFileProer(fpath, "Users.xml", fUser); err != nil {
 		return err
@@ -386,7 +247,6 @@ func processWholeFolder() error {
 	if len(os.Args) != 2 {
 		return fmt.Errorf("need to provide directory to iterate")
 	}
-
 
 	connStr := makeConnURL().String()
 	connector, err := mssql.NewConnector(connStr)
